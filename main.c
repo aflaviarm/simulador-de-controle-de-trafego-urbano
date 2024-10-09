@@ -52,6 +52,7 @@
 /* Standard includes. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 //#include <conio.h>
 
 /* FreeRTOS kernel includes. */
@@ -149,293 +150,340 @@ static BaseType_t xTraceRunning = pdTRUE;
 
 
 
-/*----------------- COMEÇO ------------------*/
+/*----------------- INÍCIO ------------------*/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "semphr.h"
 
 #define NUM_CRUZAMENTOS 4
-#define TEMPO_CICLO 30 // Tempo do ciclo semafórico em segundos
+#define TEMPO_CICLO 3 // Tempo do ciclo semafórico em segundos
 
-typedef struct {
-	char id;
-	SemaphoreHandle_t semaforoNS;
-	SemaphoreHandle_t semaforoSN;
-	SemaphoreHandle_t semaforoEW;
-	SemaphoreHandle_t semaforoWE;
+// Definições das direções
+#define NS 1
+#define SN 2
+#define EW 3
+#define WE 4
+
+/**
+ * @brief Estrutura que representa um cruzamento de trânsito.
+ *
+ * A estrutura contém informações sobre o estado dos semáforos do cruzamento
+ * e referências para os cruzamentos adjacentes, conforme a direção.
+ */
+typedef struct Cruzamento {
+    char id;                      /**< Identificador do cruzamento (A, B, C, D). */
+    bool semaforoNS;              /**< Estado do semáforo na direção Norte-Sul (NS). */
+    bool semaforoSN;              /**< Estado do semáforo na direção Sul-Norte (SN). */
+    bool semaforoEW;              /**< Estado do semáforo na direção Leste-Oeste (EW). */
+    bool semaforoWE;              /**< Estado do semáforo na direção Oeste-Leste (WE). */
+    SemaphoreHandle_t mutexNS;    /**< Mutex para controlar acesso ao semáforo NS. */
+    SemaphoreHandle_t mutexSN;    /**< Mutex para controlar acesso ao semáforo SN. */
+    SemaphoreHandle_t mutexEW;    /**< Mutex para controlar acesso ao semáforo EW. */
+    SemaphoreHandle_t mutexWE;    /**< Mutex para controlar acesso ao semáforo WE. */
+    struct Cruzamento* proximoNS; /**< Próximo cruzamento na direção NS. */
+    struct Cruzamento* proximoSN; /**< Próximo cruzamento na direção SN. */
+    struct Cruzamento* proximoEW; /**< Próximo cruzamento na direção EW. */
+    struct Cruzamento* proximoWE; /**< Próximo cruzamento na direção WE. */
 } Cruzamento;
 
+/**
+ * @brief Estrutura que representa um veículo.
+ *
+ * A estrutura contém informações sobre o veículo, como velocidade,
+ * direção, tempo de deslocamento e referência ao cruzamento atual.
+ */
 typedef struct {
-	int id;
-	int velocidade;
-	int direcao; // 1- NS, 2- SN, 3- EW, 4- WE 
-	int tempoDeslocamento;
-	Cruzamento* cruzamento;
+    int id;                        /**< Identificador do veículo. */
+    int velocidade;                /**< Velocidade do veículo em km/h. */
+    int direcao;                   /**< Direção do veículo (1-NS, 2-SN, 3-EW, 4-WE). */
+    int tempoDeslocamento;         /**< Tempo necessário para atravessar o cruzamento. */
+    Cruzamento* cruzamento;        /**< Cruzamento atual onde o veículo está. */
 } Veiculo;
 
 // Array global para armazenar referências aos cruzamentos
 Cruzamento* cruzamentos[NUM_CRUZAMENTOS];
 
-QueueHandle_t queue_NS;
-QueueHandle_t queue_SN;
-QueueHandle_t queue_EW;
-QueueHandle_t queue_WE;
+/**
+ * @brief Função que simula o comportamento de um cruzamento.
+ *
+ * A função alterna o estado dos semáforos em um ciclo pré-definido,
+ * abrindo e fechando cada direção de acordo com o tempo configurado.
+ *
+ * @param pvParameters Ponteiro para os parâmetros da função (deve ser um `Cruzamento*`).
+ */
+void vCruzamentoTask(void* pvParameters) {
+    Cruzamento* cruzamento = (Cruzamento*)pvParameters;
 
-// Função que simula o comportamento de um cruzamento
-void vCruzamentoTask(void* pvParameters)
-{
-	Cruzamento* cruzamento = (Cruzamento*)pvParameters;
+    for (;;) {
+        // Alterna o estado dos semáforos
+        xSemaphoreTake(cruzamento->mutexNS, portMAX_DELAY);
+        cruzamento->semaforoNS = !cruzamento->semaforoNS;
+        xSemaphoreGive(cruzamento->mutexNS);
 
-	for (;;) {
-		if (xSemaphoreTake(cruzamento->semaforoNS, portMAX_DELAY) == pdTRUE) {
-			// Liberar tráfego NS
-			xSemaphoreGive(cruzamento->semaforoNS);
-		}
+        xSemaphoreTake(cruzamento->mutexSN, portMAX_DELAY);
+        cruzamento->semaforoSN = !cruzamento->semaforoSN;
+        xSemaphoreGive(cruzamento->mutexSN);
 
-		if (xSemaphoreTake(cruzamento->semaforoSN, portMAX_DELAY) == pdTRUE) {
-			// Liberar tráfego SN
-			xSemaphoreGive(cruzamento->semaforoSN);
-		}
+        xSemaphoreTake(cruzamento->mutexEW, portMAX_DELAY);
+        cruzamento->semaforoEW = !cruzamento->semaforoEW;
+        xSemaphoreGive(cruzamento->mutexEW);
 
-		if (xSemaphoreTake(cruzamento->semaforoEW, portMAX_DELAY) == pdTRUE) {
-			// Liberar tráfego EW
-			xSemaphoreGive(cruzamento->semaforoEW);
-		}
+        xSemaphoreTake(cruzamento->mutexWE, portMAX_DELAY);
+        cruzamento->semaforoWE = !cruzamento->semaforoWE;
+        xSemaphoreGive(cruzamento->mutexWE);
 
-		if (xSemaphoreTake(cruzamento->semaforoWE, portMAX_DELAY) == pdTRUE) {
-			// Liberar tráfego WE
-			xSemaphoreGive(cruzamento->semaforoWE);
-		}
+        // Imprime o estado atual do cruzamento
+        printf("Cruzamento %c: NS: %s, SN: %s, EW: %s, WE: %s\n",
+            cruzamento->id,
+            cruzamento->semaforoNS ? "Aberto" : "Fechado",
+            cruzamento->semaforoSN ? "Aberto" : "Fechado",
+            cruzamento->semaforoEW ? "Aberto" : "Fechado",
+            cruzamento->semaforoWE ? "Aberto" : "Fechado");
 
-
-		// Aguarda o próximo ciclo
-		vTaskDelay(pdMS_TO_TICKS(TEMPO_CICLO * 1000));
-	}
-	
+        // Aguarda o próximo ciclo
+        vTaskDelay(pdMS_TO_TICKS(TEMPO_CICLO * 1000));
+    }
 }
 
+/**
+ * @brief Verifica se um semáforo está aberto para a direção especificada.
+ *
+ * A função utiliza semáforos binários para garantir acesso exclusivo ao estado
+ * do semáforo e verifica se o semáforo na direção desejada está aberto.
+ *
+ * @param cruzamento Ponteiro para o cruzamento onde o semáforo será verificado.
+ * @param direcao Direção do semáforo a ser verificado (NS, SN, EW, WE).
+ * @return Retorna 1 se o semáforo estiver aberto, 0 caso contrário.
+ */
 int verificarSemaforoAberto(Cruzamento* cruzamento, int direcao) {
-	SemaphoreHandle_t semaforo;
+    bool semaforoAberto = false;
 
-	// Seleciona o semáforo com base na direção
-	switch (direcao) {
-	case 1: // NS
-		semaforo = cruzamento->semaforoNS;
-		break;
-	case 2: // SN
-		semaforo = cruzamento->semaforoSN;
-		break;
-	case 3: // EW
-		semaforo = cruzamento->semaforoEW;
-		break;
-	case 4: // WE
-		semaforo = cruzamento->semaforoWE;
-		break;
-	default:
-		return 0; // Direção inválida
-	}
+    switch (direcao) {
+    case NS:
+        xSemaphoreTake(cruzamento->mutexNS, portMAX_DELAY);
+        semaforoAberto = cruzamento->semaforoNS;
+        xSemaphoreGive(cruzamento->mutexNS);
+        break;
+    case SN:
+        xSemaphoreTake(cruzamento->mutexSN, portMAX_DELAY);
+        semaforoAberto = cruzamento->semaforoSN;
+        xSemaphoreGive(cruzamento->mutexSN);
+        break;
+    case EW:
+        xSemaphoreTake(cruzamento->mutexEW, portMAX_DELAY);
+        semaforoAberto = cruzamento->semaforoEW;
+        xSemaphoreGive(cruzamento->mutexEW);
+        break;
+    case WE:
+        xSemaphoreTake(cruzamento->mutexWE, portMAX_DELAY);
+        semaforoAberto = cruzamento->semaforoWE;
+        xSemaphoreGive(cruzamento->mutexWE);
+        break;
+    default:
+        return 0; // Direção inválida
+    }
 
-	// Tenta tomar o semáforo
-	if (xSemaphoreTake(semaforo, 0) == pdTRUE) {
-		// Semáforo está aberto
-		xSemaphoreGive(semaforo); // Libera o semáforo novamente
-		return 1; // Pode atravessar
-	}
-	else {
-		// Semáforo está fechado
-		return 0; // Não pode atravessar
-	}
+    return semaforoAberto ? 1 : 0;
 }
 
-// Função que simula o comportamento de um veículo
-void vVeiculoTask(void* pvParameters)
-{
-	Veiculo* veiculo = (Veiculo*)pvParameters;
+/**
+ * @brief Simula o comportamento de um veículo em um cruzamento.
+ *
+ * A função controla o movimento do veículo, verificando o estado dos semáforos
+ * e movimentando-o entre cruzamentos adjacentes conforme a direção escolhida.
+ *
+ * @param pvParameters Ponteiro para os parâmetros da função (deve ser um `Veiculo*`).
+ */
+void vVeiculoTask(void* pvParameters) {
+    Veiculo* veiculo = (Veiculo*)pvParameters;
+    char* direcao;
 
-	char* direcao;
+    switch (veiculo->direcao) {
+    case NS: direcao = "NS"; break;
+    case SN: direcao = "SN"; break;
+    case EW: direcao = "EW"; break;
+    case WE: direcao = "WE"; break;
+    default: direcao = "ERROR"; break;
+    }
 
-	switch (veiculo->direcao){
-		case 1:
-			direcao = "NS";
-			break;
-		case 2:
-			direcao = "SN";
-			break;
-		case 3:
-			direcao = "EW";
-			break;
-		case 4:
-			direcao = "WE";
-			break;
-		default:
-			break;
-	}
+    printf("Veículo ID: %d, Velocidade: %d km/h, Cruzamento: %c, Direção: %s\n",
+        veiculo->id, veiculo->velocidade, veiculo->cruzamento->id, direcao);
 
-	// Simulação de comportamento do veículo
-	printf("Veiculo ID: %d, Velocidade: %d km/h, Direcao: %s\n", veiculo->id, veiculo->velocidade, direcao);
+    for (;;) {
+        if (verificarSemaforoAberto(veiculo->cruzamento, veiculo->direcao)) {
+            // O semáforo está aberto, o veículo pode atravessar
+            printf("Veículo ID: %d, Direção: %s - Atravessando o semáforo.\n", veiculo->id, direcao);
+            vTaskDelay(pdMS_TO_TICKS(veiculo->tempoDeslocamento)); // Simula a travessia
 
-	if (verificarSemaforoAberto(veiculo->cruzamento, veiculo->direcao)) {
-		// O semáforo está aberto, o veículo pode atravessar
-		printf("Veiculo ID: %d, Direcao: %s - Atravessando o semaforo.\n",
-			veiculo->id, direcao);
-		// Simula a travessia
-		vTaskDelay(pdMS_TO_TICKS(veiculo->tempoDeslocamento));
+            // Move para o próximo cruzamento, verificando se é nulo
+            switch (veiculo->direcao) {
+            case NS: veiculo->cruzamento = veiculo->cruzamento->proximoNS; break;
+            case SN: veiculo->cruzamento = veiculo->cruzamento->proximoSN; break;
+            case EW: veiculo->cruzamento = veiculo->cruzamento->proximoEW; break;
+            case WE: veiculo->cruzamento = veiculo->cruzamento->proximoWE; break;
+            }
 
-		if ((veiculo->cruzamento->id == 'A' && (veiculo->direcao == 2 || veiculo->direcao == 3)) ||
-			(veiculo->cruzamento->id == 'B' && (veiculo->direcao == 2 || veiculo->direcao == 4)) ||
-			(veiculo->cruzamento->id == 'C' && (veiculo->direcao == 1 || veiculo->direcao == 3)) ||
-			(veiculo->cruzamento->id == 'D' && (veiculo->direcao == 1 || veiculo->direcao == 4)))
-		{
-			printf("O veículo ID: %d, saiu dos cruzamentos.\n", veiculo->id);
-
-			vTaskDelete(NULL);
-		}
-	}
-	else {
-		// O semáforo está fechado, o veículo deve esperar
-		printf("Veiculo ID: %d, Direcao: %s - Esperando o semaforo.\n",
-			veiculo->id, direcao);
-		// Aqui você pode fazer o veículo esperar, talvez colocando ele em uma fila
-	}
+            if (veiculo->cruzamento == NULL) {
+                printf("Veículo ID: %d - Saiu da rede de cruzamentos.\n", veiculo->id);
+                vTaskDelete(NULL); // Encerra a task quando o veículo sai da rede
+            }
+            else {
+                printf("Veículo ID: %d - Chegou ao cruzamento %c.\n", veiculo->id, veiculo->cruzamento->id);
+            }
+        }
+        else {
+            // O semáforo está fechado, o veículo deve esperar
+            printf("Veículo ID: %d, Direção: %s - Esperando o semáforo.\n", veiculo->id, direcao);
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Espera antes de tentar novamente
+        }
+    }
 }
 
-// Função que gera veículos indefinidamente
-void vVeiculoCreator(void* pvParameters)
-{
-	int veiculoCounter = 0;
+/**
+ * @brief Gera veículos indefinidamente e atribui-os a cruzamentos.
+ *
+ * A função cria novos veículos com direções e velocidades aleatórias,
+ * e os distribui entre os cruzamentos disponíveis.
+ *
+ * @param pvParameters Parâmetros passados para a função (não utilizado neste caso).
+ */
+void vVeiculoCreator(void* pvParameters) {
+    int veiculoCounter = 0;
 
-	while (1)
-	{
-		// Cria um novo veículo
-		Veiculo* novoVeiculo = (Veiculo*)pvPortMalloc(sizeof(Veiculo));
+    while (1) {
+        Veiculo* novoVeiculo = (Veiculo*)pvPortMalloc(sizeof(Veiculo));
+        if (novoVeiculo == NULL) {
+            printf("Erro ao alocar memória para um novo veículo.\n");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
-		// Inicializa os dados do veículo
-		novoVeiculo->id = veiculoCounter++;
-		novoVeiculo->direcao = (rand() % 4) + 1;      // Direção aleatória entre 1 e 4
-		
-		if (novoVeiculo->direcao > 2)
-		{
-			novoVeiculo->velocidade = (rand() % 31) + 20; // Velocidade entre 20 e 50 km/h
-		}
-		else
-		{
-			novoVeiculo->velocidade = (rand() % 31) + 30; // Velocidade entre 30 e 60 km/h
-		}
-		
-		novoVeiculo->tempoDeslocamento = (int)round(500 / (novoVeiculo->velocidade * 0.27778));
-		
-		// Escolhe um cruzamento aleatório
-		int cruzamentoIndex = rand() % NUM_CRUZAMENTOS; // Escolha aleatória do cruzamento
-		novoVeiculo->cruzamento = cruzamentos[cruzamentoIndex]; // Referência ao cruzamento escolhido
+        novoVeiculo->id = veiculoCounter++;
+        novoVeiculo->direcao = (rand() % 4) + 1; // Direção aleatória entre 1 e 4
 
-		if ((novoVeiculo->cruzamento->id == 'A' && (novoVeiculo->direcao == 1 || novoVeiculo->direcao == 4)) ||
-			(novoVeiculo->cruzamento->id == 'B' && (novoVeiculo->direcao == 1 || novoVeiculo->direcao == 3)) ||
-			(novoVeiculo->cruzamento->id == 'C' && (novoVeiculo->direcao == 2 || novoVeiculo->direcao == 4)) ||
-			(novoVeiculo->cruzamento->id == 'D' && (novoVeiculo->direcao == 2 || novoVeiculo->direcao == 3)))
-		{
-			vPortFree(novoVeiculo);
-		}
-		else
-		{
-			// Adiciona o veículo à fila correspondente
-			switch (novoVeiculo->direcao) {
-			case 1: // NS
-				xQueueSend(queue_NS, (void*)&novoVeiculo, portMAX_DELAY);
-				break;
-			case 2: // SN
-				xQueueSend(queue_SN, (void*)&novoVeiculo, portMAX_DELAY);
-				break;
-			case 3: // EW
-				xQueueSend(queue_EW, (void*)&novoVeiculo, portMAX_DELAY);
-				break;
-			case 4: // WE
-				xQueueSend(queue_WE, (void*)&novoVeiculo, portMAX_DELAY);
-				break;
-			default:
-				vPortFree(novoVeiculo); // Libera a memória se a direção for inválida
-				continue; // Ignora a iteração atual e continua
-			}
+        // Inicializa a velocidade do veículo
+        novoVeiculo->velocidade = (novoVeiculo->direcao > 2) ? (rand() % 31) + 20 : (rand() % 31) + 30;
+        novoVeiculo->tempoDeslocamento = (int)round(500 / (novoVeiculo->velocidade * 0.27778));
 
-			// Cria uma task para o novo veículo
-			if (xTaskCreate(vVeiculoTask,                 // Função da task
-				"VeiculoTask",                // Nome da task
-				configMINIMAL_STACK_SIZE,     // Tamanho da stack
-				(void*)novoVeiculo,          // Parâmetro passado para a task (veículo)
-				1,                            // Prioridade da task
-				NULL) != pdPASS)              // Handle da task (não utilizado)
-			{
-				printf("Falha ao criar veiculo ID %d\n", novoVeiculo->id);
-				vPortFree(novoVeiculo); // Libera a memória em caso de falha
-			}
+        // Escolhe um cruzamento aleatório
+        int cruzamentoIndex = rand() % NUM_CRUZAMENTOS;
+        novoVeiculo->cruzamento = cruzamentos[cruzamentoIndex];
 
-			vTaskDelay(pdMS_TO_TICKS((rand() % 3) * 1000));  // Aguarda antes de criar outro veículo
-		}
-	}
+        if (novoVeiculo->cruzamento == NULL) {
+            printf("Erro: veículo foi atribuído a um cruzamento nulo.\n");
+            vPortFree(novoVeiculo);
+            continue;
+        }
+
+        // Cria uma task para o novo veículo
+        if (xTaskCreate(vVeiculoTask, "VeiculoTask", configMINIMAL_STACK_SIZE, (void*)novoVeiculo, 1, NULL) != pdPASS) {
+            printf("Falha ao criar veículo ID %d\n", novoVeiculo->id);
+            vPortFree(novoVeiculo);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS((rand() % 3) * 1000)); // Aguarda antes de criar outro veículo
+    }
 }
 
-void CruzamentoCreator()
-{
-	char cruzamentoID = 'A';
+/**
+ * @brief Cria os cruzamentos e define as conexões entre eles.
+ *
+ * A função inicializa todos os cruzamentos e define as conexões de acordo
+ * com o layout especificado. Os semáforos começam alternadamente abertos.
+ */
+void CruzamentoCreator() {
+    char cruzamentoID = 'A';
 
-	for (int i = 0; i < NUM_CRUZAMENTOS; i++) {
+    for (int i = 0; i < NUM_CRUZAMENTOS; i++) {
+        Cruzamento* cruzamento = (Cruzamento*)pvPortMalloc(sizeof(Cruzamento));
+        if (cruzamento == NULL) {
+            printf("Erro ao alocar memória para o cruzamento %c.\n", cruzamentoID + i);
+            continue;
+        }
 
-		Cruzamento* cruzamento = (Cruzamento*)pvPortMalloc(sizeof(Cruzamento));
+        cruzamento->id = cruzamentoID++;
+        cruzamento->semaforoNS = (i % 2 == 0); // Semáforos alternados começam verdes
+        cruzamento->semaforoSN = (i % 2 == 0);
+        cruzamento->semaforoEW = !(i % 2 == 0);
+        cruzamento->semaforoWE = !(i % 2 == 0);
 
-		cruzamento->id = cruzamentoID++;
-		cruzamento->semaforoNS = xSemaphoreCreateBinary();
-		cruzamento->semaforoSN = xSemaphoreCreateBinary();
-		cruzamento->semaforoEW = xSemaphoreCreateBinary();
-		cruzamento->semaforoWE = xSemaphoreCreateBinary();
+        // Inicializa os semáforos binários
+        cruzamento->mutexNS = xSemaphoreCreateBinary();
+        cruzamento->mutexSN = xSemaphoreCreateBinary();
+        cruzamento->mutexEW = xSemaphoreCreateBinary();
+        cruzamento->mutexWE = xSemaphoreCreateBinary();
 
-		// Defina quais semáforos começam como verdes
-		if (i % 2 == 0) {  // Semáforos NS e SN começam verdes
-			xSemaphoreGive(cruzamento->semaforoNS);  // NS verde
-			xSemaphoreGive(cruzamento->semaforoSN);  // SN verde
-		}
-		else {  // Semáforos EW e WE começam verdes
-			xSemaphoreGive(cruzamento->semaforoEW);  // EW verde
-			xSemaphoreGive(cruzamento->semaforoWE);  // WE verde
-		}
+        // Libera os mutexes iniciais
+        xSemaphoreGive(cruzamento->mutexNS);
+        xSemaphoreGive(cruzamento->mutexSN);
+        xSemaphoreGive(cruzamento->mutexEW);
+        xSemaphoreGive(cruzamento->mutexWE);
 
-		cruzamentos[i] = cruzamento; // Armazena o cruzamento no array
+        // Inicializa ponteiros para os próximos cruzamentos como NULL
+        cruzamento->proximoNS = NULL;
+        cruzamento->proximoSN = NULL;
+        cruzamento->proximoEW = NULL;
+        cruzamento->proximoWE = NULL;
 
-		if (xTaskCreate(vCruzamentoTask,
-			"Cruzamento",
-			configMINIMAL_STACK_SIZE,
-			(void*)cruzamento,
-			1,
-			NULL) != pdPASS)
-		{
-			printf("Falha ao criar o cruzamento %c.\n", cruzamento->id);
-			vPortFree(cruzamento);
-		}
-	}
+        cruzamentos[i] = cruzamento;
+
+        if (xTaskCreate(vCruzamentoTask, "CruzamentoTask", configMINIMAL_STACK_SIZE, (void*)cruzamento, 1, NULL) != pdPASS) {
+            printf("Falha ao criar o cruzamento %c.\n", cruzamento->id);
+            vPortFree(cruzamento);
+        }
+    }
+
+    // Definindo as conexões entre os cruzamentos
+    cruzamentos[0]->proximoSN = cruzamentos[2]; // A -> C (SN)
+    cruzamentos[0]->proximoWE = cruzamentos[1]; // A -> B (WE)
+
+    cruzamentos[1]->proximoSN = cruzamentos[3]; // B -> D (SN)
+    cruzamentos[1]->proximoEW = cruzamentos[0]; // B -> A (EW)
+
+    cruzamentos[2]->proximoNS = cruzamentos[0]; // C -> A (NS)
+    cruzamentos[2]->proximoWE = cruzamentos[3]; // C -> D (WE)
+
+    cruzamentos[3]->proximoNS = cruzamentos[1]; // D -> B (NS)
+    cruzamentos[3]->proximoEW = cruzamentos[2]; // D -> C (EW)
 }
 
-int main( void )
-{
-	/* This demo uses heap_5.c, so start by defining some heap regions.  heap_5
-	is only used for test and example reasons.  Heap_4 is more appropriate.  See
-	http://www.freertos.org/a00111.html for an explanation. */
-	prvInitialiseHeap();
+/**
+ * @brief Função principal que inicializa o sistema de controle de tráfego.
+ *
+ * A função configura a memória do FreeRTOS, cria os cruzamentos e inicializa
+ * a task responsável por criar veículos.
+ *
+ * @return Sempre retorna 0.
+ */
+int main(void) {
+    // Inicializa o heap
+    prvInitialiseHeap();
 
-	/* Initialise the trace recorder.  Use of the trace recorder is optional.
-	See http://www.FreeRTOS.org/trace for more information. */
-	vTraceEnable( TRC_START );
+    // Habilita o trace recorder (opcional)
+    vTraceEnable(TRC_START);
 
-	queue_NS = xQueueCreate(10, sizeof(Veiculo*));
-	queue_SN = xQueueCreate(10, sizeof(Veiculo*));
-	queue_EW = xQueueCreate(10, sizeof(Veiculo*));
-	queue_WE = xQueueCreate(10, sizeof(Veiculo*));
+    // Cria os cruzamentos
+    CruzamentoCreator();
 
-	// Criar tasks dos cruzamentos
-	CruzamentoCreator();
+    // Cria a task responsável por gerar veículos indefinidamente
+    xTaskCreate(vVeiculoCreator, "VeiculoCreator", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
-	// Cria a task responsável por gerar veículos indefinidamente
-	xTaskCreate(vVeiculoCreator, "VeiculoCreator", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    // Inicia o agendador do FreeRTOS
+    vTaskStartScheduler();
 
-	
-	vTaskStartScheduler();
-	for (;;);
-	return 0;
+    // Loop infinito para manter o programa ativo
+    for (;;);
+    return 0;
 }
+
+
+
 /*-----------------------------------------------------------*/
 
 
