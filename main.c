@@ -153,13 +153,7 @@ static BaseType_t xTraceRunning = pdTRUE;
 /*----------------- INÍCIO ------------------*/
 
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdbool.h>
-#include "FreeRTOS.h"
-#include "task.h"
-#include "queue.h"
-#include "semphr.h"
 
 #define NUM_CRUZAMENTOS 4
 #define TEMPO_CICLO 3 // Tempo do ciclo semafórico em segundos
@@ -241,10 +235,10 @@ void vCruzamentoTask(void* pvParameters) {
         // Imprime o estado atual do cruzamento
         printf("Cruzamento %c: NS: %s, SN: %s, EW: %s, WE: %s\n",
             cruzamento->id,
-            cruzamento->semaforoNS ? "Aberto" : "Fechado",
-            cruzamento->semaforoSN ? "Aberto" : "Fechado",
-            cruzamento->semaforoEW ? "Aberto" : "Fechado",
-            cruzamento->semaforoWE ? "Aberto" : "Fechado");
+            cruzamento->semaforoNS ? "\033[32mAberto\033[0m" : "\033[31mFechado\033[0m",
+            cruzamento->semaforoSN ? "\033[32mAberto\033[0m" : "\033[31mFechado\033[0m",
+            cruzamento->semaforoEW ? "\033[32mAberto\033[0m" : "\033[31mFechado\033[0m",
+            cruzamento->semaforoWE ? "\033[32mAberto\033[0m" : "\033[31mFechado\033[0m");
 
         // Aguarda o próximo ciclo
         vTaskDelay(pdMS_TO_TICKS(TEMPO_CICLO * 1000));
@@ -309,16 +303,15 @@ void vVeiculoTask(void* pvParameters) {
     case SN: direcao = "SN"; break;
     case EW: direcao = "EW"; break;
     case WE: direcao = "WE"; break;
-    default: direcao = "ERROR"; break;
     }
 
-    printf("Veículo ID: %d, Velocidade: %d km/h, Cruzamento: %c, Direção: %s\n",
+    printf("Veiculo ID: %d, Velocidade: %d km/h, Cruzamento: %c, Direcao: %s\n",
         veiculo->id, veiculo->velocidade, veiculo->cruzamento->id, direcao);
 
     for (;;) {
         if (verificarSemaforoAberto(veiculo->cruzamento, veiculo->direcao)) {
             // O semáforo está aberto, o veículo pode atravessar
-            printf("Veículo ID: %d, Direção: %s - Atravessando o semáforo.\n", veiculo->id, direcao);
+            printf("Veiculo ID: %d, Direcao: %s - Atravessando o semaforo.\n", veiculo->id, direcao);
             vTaskDelay(pdMS_TO_TICKS(veiculo->tempoDeslocamento)); // Simula a travessia
 
             // Move para o próximo cruzamento, verificando se é nulo
@@ -330,16 +323,16 @@ void vVeiculoTask(void* pvParameters) {
             }
 
             if (veiculo->cruzamento == NULL) {
-                printf("Veículo ID: %d - Saiu da rede de cruzamentos.\n", veiculo->id);
+                printf("Veiculo ID: %d - Saiu da rede de cruzamentos.\n", veiculo->id);
                 vTaskDelete(NULL); // Encerra a task quando o veículo sai da rede
             }
             else {
-                printf("Veículo ID: %d - Chegou ao cruzamento %c.\n", veiculo->id, veiculo->cruzamento->id);
+                printf("Veiculo ID: %d - Chegou ao cruzamento %c.\n", veiculo->id, veiculo->cruzamento->id);
             }
         }
         else {
             // O semáforo está fechado, o veículo deve esperar
-            printf("Veículo ID: %d, Direção: %s - Esperando o semáforo.\n", veiculo->id, direcao);
+            printf("Veiculo ID: %d, Direcao: %s - Esperando o semaforo.\n", veiculo->id, direcao);
             vTaskDelay(pdMS_TO_TICKS(1000)); // Espera antes de tentar novamente
         }
     }
@@ -359,7 +352,7 @@ void vVeiculoCreator(void* pvParameters) {
     while (1) {
         Veiculo* novoVeiculo = (Veiculo*)pvPortMalloc(sizeof(Veiculo));
         if (novoVeiculo == NULL) {
-            printf("Erro ao alocar memória para um novo veículo.\n");
+            printf("Erro ao alocar memoria para um novo veiculo.\n");
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -376,14 +369,14 @@ void vVeiculoCreator(void* pvParameters) {
         novoVeiculo->cruzamento = cruzamentos[cruzamentoIndex];
 
         if (novoVeiculo->cruzamento == NULL) {
-            printf("Erro: veículo foi atribuído a um cruzamento nulo.\n");
+            printf("Erro: veiculo foi atribuido a um cruzamento nulo.\n");
             vPortFree(novoVeiculo);
             continue;
         }
 
         // Cria uma task para o novo veículo
         if (xTaskCreate(vVeiculoTask, "VeiculoTask", configMINIMAL_STACK_SIZE, (void*)novoVeiculo, 1, NULL) != pdPASS) {
-            printf("Falha ao criar veículo ID %d\n", novoVeiculo->id);
+            printf("Falha ao criar veiculo ID %d\n", novoVeiculo->id);
             vPortFree(novoVeiculo);
         }
 
@@ -403,7 +396,7 @@ void CruzamentoCreator() {
     for (int i = 0; i < NUM_CRUZAMENTOS; i++) {
         Cruzamento* cruzamento = (Cruzamento*)pvPortMalloc(sizeof(Cruzamento));
         if (cruzamento == NULL) {
-            printf("Erro ao alocar memória para o cruzamento %c.\n", cruzamentoID + i);
+            printf("Erro ao alocar memoria para o cruzamento %c.\n", cruzamentoID + i);
             continue;
         }
 
@@ -440,16 +433,16 @@ void CruzamentoCreator() {
     }
 
     // Definindo as conexões entre os cruzamentos
-    cruzamentos[0]->proximoSN = cruzamentos[2]; // A -> C (SN)
+    cruzamentos[0]->proximoNS = cruzamentos[2]; // A -> C (NS)
     cruzamentos[0]->proximoWE = cruzamentos[1]; // A -> B (WE)
 
-    cruzamentos[1]->proximoSN = cruzamentos[3]; // B -> D (SN)
+    cruzamentos[1]->proximoNS = cruzamentos[3]; // B -> D (NS)
     cruzamentos[1]->proximoEW = cruzamentos[0]; // B -> A (EW)
 
-    cruzamentos[2]->proximoNS = cruzamentos[0]; // C -> A (NS)
+    cruzamentos[2]->proximoSN = cruzamentos[0]; // C -> A (SN)
     cruzamentos[2]->proximoWE = cruzamentos[3]; // C -> D (WE)
 
-    cruzamentos[3]->proximoNS = cruzamentos[1]; // D -> B (NS)
+    cruzamentos[3]->proximoSN = cruzamentos[1]; // D -> B (NS)
     cruzamentos[3]->proximoEW = cruzamentos[2]; // D -> C (EW)
 }
 
@@ -462,10 +455,13 @@ void CruzamentoCreator() {
  * @return Sempre retorna 0.
  */
 int main(void) {
-    // Inicializa o heap
-    prvInitialiseHeap();
 
-    // Habilita o trace recorder (opcional)
+    /* This demo uses heap_5.c, so start by defining some heap regions.  heap_5
+    is only used for test and example reasons.  Heap_4 is more appropriate.  See
+    http://www.freertos.org/a00111.html for an explanation. */
+    prvInitialiseHeap();
+    /* Initialise the trace recorder.  Use of the trace recorder is optional.
+    See http://www.FreeRTOS.org/trace for more information. */
     vTraceEnable(TRC_START);
 
     // Cria os cruzamentos
